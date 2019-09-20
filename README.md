@@ -7,7 +7,7 @@ You should copy nut.default.conf to nut.conf and make all of your local edits in
 
 It can download any titles you do not have a key for (for archiving), by enabling `sansTitleKey` in `nut.conf`.  These titles are saved with the `.nsx` file extension, and can be unlocked at a later time when a title key is found.
 
-![alt text](https://raw.githubusercontent.com/blawar/nut/master/public_html/images/ss.jpg)
+![alt text](https://raw.githubusercontent.com/r4dius/nut/tree/webserver/public_html/images/ss.jpg)
 
 ---------
 
