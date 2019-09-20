@@ -180,6 +180,9 @@ optional arguments:
   --scrape-title SCRAPE_TITLE
                         Scrape title from Nintendo servers
 ```
+### Compile server.exe
+ - required : pip install pyinstall PyQt5==5.12.1
+ run pyinstaller server.spec or _compile_server.bat
 
 # Credits
 - Original CDNSP
