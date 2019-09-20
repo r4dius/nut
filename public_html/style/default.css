@@ -181,6 +181,16 @@ figure {
 	text-indent: -9999px;
 }
 
+.PL label {
+	background-image: url(/images/flags/PL.png);
+	text-indent: -9999px;
+}
+
+.RU label {
+	background-image: url(/images/flags/RU.png);
+	text-indent: -9999px;
+}
+
 #regions li.AS, #regions li.rgn_ {
 	display: none;
 }
