@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 import os
+import Fs
 import pathlib
 import re
 from nut import Status
@@ -8,7 +9,6 @@ import time
 from nut import Print
 import threading
 import json
-import Fs
 
 global files
 files = {}
@@ -30,16 +30,10 @@ def getByTitleId(id):
 			return f
 	return None
 	
-def getBaseId(id):
-	if not id:
-		return None
-	titleIdNum = int(id, 16)
-	return '{:02X}'.format(titleIdNum & 0xFFFFFFFFFFFFE000).zfill(16)
-	
 def scan(base, force = False):
 	global hasScanned
-	#if hasScanned and not force:
-	#	return
+	if hasScanned and not force:
+		return
 
 	hasScanned = True
 	i = 0
@@ -60,7 +54,7 @@ def scan(base, force = False):
 		return 0
 
 	status = Status.create(len(fileList), desc = 'Scanning files...')
-	
+
 	try:
 		for path, name in fileList.items():
 			try:
@@ -69,7 +63,6 @@ def scan(base, force = False):
 				if not path in files:
 					Print.info('scanning ' + name)
 					nsp = Fs.Nsp(path, None)
-					nsp.getFileSize()
 						
 					files[nsp.path] = nsp
 
@@ -81,14 +74,11 @@ def scan(base, force = False):
 				raise
 			except BaseException as e:
 				Print.info('An error occurred processing file: ' + str(e))
-				raise
-		
 
 		save()
 		status.close()
 	except BaseException as e:
 		Print.info('An error occurred scanning files: ' + str(e))
-		raise
 	return i
 
 def removeEmptyDir(path, removeRoot=True):
@@ -124,14 +114,10 @@ def load(fileName = 'titledb/files.json'):
 		if os.path.isfile(fileName):
 			with open(fileName, encoding="utf-8-sig") as f:
 				for k in json.loads(f.read()):
-					t = Fs.Nsp(None, None)
-
-					t.path = k['path']
+					t = Fs.Nsp(k['path'], None)
+					t.timestamp = k['timestamp']
 					t.titleId = k['titleId']
 					t.version = k['version']
-					
-					if 'fileSize' in k:
-						t.fileSize = k['fileSize']
 
 					if not t.path:
 						continue
@@ -139,20 +125,16 @@ def load(fileName = 'titledb/files.json'):
 					path = os.path.abspath(t.path)
 					if os.path.isfile(path): 
 						files[path] = t #Fs.Nsp(path, None)
-
-
 	except:
 		raise
 	Print.info('loaded file list in ' + str(time.clock() - timestamp) + ' seconds')
 
-def save(fileName = 'titledb/files.json', map = ['id', 'path', 'version', 'fileSize']):
+def save(fileName = 'titledb/files.json', map = ['id', 'path', 'version', 'timestamp', 'hasValidTicket']):
 	lock.acquire()
-	os.makedirs(os.path.dirname(fileName), exist_ok = True)
 
 	try:
 		j = []
 		for i,k in files.items():
-			k.getFileSize()
 			j.append(k.dict())
 		with open(fileName, 'w') as outfile:
 			json.dump(j, outfile, indent=4, sort_keys=True)

@@ -49,6 +49,10 @@ def loopThread():
 				except:
 					pass
 
+		if Config.jsonOutput:
+			print_(json.dumps(jsonData))
+			sys.stdout.flush()
+
 def create(size, desc = None, unit='B'):
 	lock.acquire()
 	position = len(lst)
@@ -79,8 +83,10 @@ class Status:
 		self.timestamp = time.clock()
 		self.desc = desc
 
-		self.tqdm = tqdm.tqdm(total=size, unit=unit, unit_scale=True, position = position, desc=desc, leave=False, ascii = True)
-
+		if not Config.jsonOutput:
+			self.tqdm = tqdm.tqdm(total=size, unit=unit, unit_scale=True, position = position, desc=desc, leave=False, ascii = True)
+		else:
+			self.tqdm = None
 
 	def add(self, v=1):
 		#lock.acquire()

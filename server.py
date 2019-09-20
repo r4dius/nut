@@ -8,12 +8,14 @@ import pathlib
 import urllib3
 import urllib
 import json
-# import webbrowser
+import webbrowser
 import Server
 
 import nut
+from nut import Title
+from nut import Titles
 from nut import Nsps
-
+import CDNSP
 from nut import Config
 import time
 
@@ -49,9 +51,7 @@ class Header:
 		self.layout = QHBoxLayout()
 
 		self.textbox = QLineEdit(app)
-		self.textbox.setMinimumWidth(25)
-		self.textbox.setAlignment(Qt.AlignLeft)
-		self.textbox.setText(os.path.abspath(Config.paths.scan[0]))
+		self.textbox.setText(os.path.abspath(Config.paths.scan))
 		self.textbox.textChanged.connect(self.updatePath)
 		self.layout.addWidget(self.textbox)
 
@@ -59,19 +59,20 @@ class Header:
 		self.scan.clicked.connect(app.on_scan)
 		self.layout.addWidget(self.scan)
 
-		# self.autolaunchBrowser = QCheckBox("Launch Web Browser?", app)
-		# self.autolaunchBrowser.setChecked(Config.autolaunchBrowser)
-		# self.autolaunchBrowser.stateChanged.connect(self.onCheck)
-		# self.layout.addWidget(self.autolaunchBrowser)
+		self.autolaunchBrowser = QCheckBox("Auto-Launch Web Browser?", app)
+		self.autolaunchBrowser.setChecked(Config.autolaunchBrowser)
+		self.autolaunchBrowser.stateChanged.connect(self.onCheck)
+		self.layout.addWidget(self.autolaunchBrowser)
 
-		self.serverInfo = QLabel("<b>IP:</b>  %s  <b>Port:</b>  %s  <b>User:</b>  %s  <b>Password:</b>  %s" % (getIpAddress(), str(Config.server.port), Users.first().id, Users.first().password))
-		self.serverInfo.setMinimumWidth(200)
+		self.serverInfo = QLabel("IP: %s  Port: %s  User: %s  Password: %s" % (getIpAddress(), str(Config.server.port), Users.first().id, Users.first().password))
+		self.serverInfo.setFixedWidth(600)
 		self.serverInfo.setAlignment(Qt.AlignCenter)
-		self.layout.addWidget(self.serverInfo)
 
-		self.usbStatus = QLabel("<b>USB:</b>  " + str(Usb.status))
-		self.usbStatus.setMinimumWidth(50)
-		self.usbStatus.setAlignment(Qt.AlignCenter)
+		self.layout.addWidget(self.serverInfo)
+		self.usbStatus = QLabel("USB Status: " + str(Usb.status))
+
+		self.usbStatus.setFixedWidth(200)
+
 		self.layout.addWidget(self.usbStatus)
 
 		self.timer = QTimer()
@@ -81,19 +82,19 @@ class Header:
 
 		Users.export()
 
-	# def onCheck(self, state):
-	# 	if state == Qt.Checked:
-	# 		Config.autolaunchBrowser = True
-	# 	else:
-	# 		Config.autolaunchBrowser = False
-	# 	Config.save()
+	def onCheck(self, state):
+		if state == Qt.Checked:
+			Config.autolaunchBrowser = True
+		else:
+			Config.autolaunchBrowser = False
+		Config.save()
 
 	def updatePath(self):
-		Config.paths.scan[0] = self.textbox.text()
+		Config.paths.scan = self.textbox.text()
 		Config.save()
 
 	def tick(self):
-		self.usbStatus.setText("<b>USB:</b> " + str(Usb.status))
+		self.usbStatus.setText("USB Status: " + str(Usb.status))
 
 class Progress:
 	def __init__(self, app):
@@ -144,7 +145,7 @@ class App(QWidget):
 		super().__init__()
 		self.setWindowIcon(QIcon('public_html/images/logo.jpg'))
 		screen = QDesktopWidget().screenGeometry()
-		self.title = 'NUT USB / Web Server v2.1'
+		self.title = 'NUT USB / Web Server v1.1'
 		self.left = screen.width() / 4
 		self.top = screen.height() / 4
 		self.width = screen.width() / 2
@@ -200,30 +201,25 @@ class App(QWidget):
 	@pyqtSlot()
 	def on_scan(self):
 		self.tableWidget.setRowCount(0)
-		nut.scan()
+		Nsps.scan(Config.paths.scan, True)
 		self.refreshTable()
 
 	@pyqtSlot()
 	def refreshTable(self):
-		try:
-			self.tableWidget.setRowCount(0)
-			self.tableWidget.setRowCount(len(Nsps.files))
-			i = 0
-			for k, f in Nsps.files.items():
-				if f.path.endswith('.nsx'):
-					continue
+		self.tableWidget.setRowCount(len(Nsps.files))
+		i = 0
+		for k, f in Nsps.files.items():
+			title = f.title()
+			if f.path.endswith('.nsx'):
+				continue
 
-				self.tableWidget.setItem(i,0, QTableWidgetItem(f.fileName()))
-				self.tableWidget.setItem(i,1, QTableWidgetItem(str(f.titleId)))
-				self.tableWidget.setItem(i,2, QTableWidgetItem("UPD" if f.isUpdate() else ("DLC" if f.isDLC() else "BASE")))
-				self.tableWidget.setItem(i,3, QTableWidgetItem(str(f.fileSize)))
+			self.tableWidget.setItem(i,0, QTableWidgetItem(os.path.basename(f.path)))
+			self.tableWidget.setItem(i,1, QTableWidgetItem(str(f.titleId)))
+			self.tableWidget.setItem(i,2, QTableWidgetItem("UPD" if title.isUpdate else ("DLC" if title.isDLC else "BASE")))
+			self.tableWidget.setItem(i,3, QTableWidgetItem(str(f.fileSize or title.size)))
+			i = i + 1
 
-				i = i + 1
-
-			self.tableWidget.setRowCount(i)
-		except BaseException as e:
-			print('exception: ' + str(e))
-			pass
+		self.tableWidget.setRowCount(i)
  
 threadRun = True
 
@@ -236,10 +232,10 @@ def nutThread():
 def initThread(app):
 	nut.scan()
 	app.refresh()
-	# if Config.autolaunchBrowser:
-	# 	webbrowser.open_new_tab('http://' + urllib.parse.quote_plus(Users.first().id) + ':' + urllib.parse.quote_plus(Users.first().password) + '@' + getIpAddress() + ':' + str(Config.server.port))
+	if Config.autolaunchBrowser:
+		webbrowser.open_new_tab('http://' + urllib.parse.quote_plus(Users.first().id) + ':' + urllib.parse.quote_plus(Users.first().password) + '@' + getIpAddress() + ':' + str(Config.server.port))
 			
-def run():
+if __name__ == '__main__':
 	urllib3.disable_warnings()
 
 
@@ -252,6 +248,7 @@ def run():
 	print('               `"_(  _/="`')
 	print('                `"\'')
 
+	nut.initTitles()
 	nut.initFiles()
 
 	app = QApplication(sys.argv)
@@ -268,6 +265,4 @@ def run():
 	sys.exit(app.exec_())
 	
 	print('fin')
-	
-if __name__ == '__main__':
-	run()
+

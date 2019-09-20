@@ -1,6 +1,8 @@
 from enum import IntEnum
 import Fs.Type
+from nut import aes128
 from nut import Print
+from nut import Hex
 from binascii import hexlify as hx, unhexlify as uhx
 
 class BaseFile:
@@ -86,9 +88,6 @@ class BaseFile:
 		
 	def readInt32(self, byteorder='little', signed = False):
 		return int.from_bytes(self.read(4), byteorder=byteorder, signed=signed)
-
-	def readInt48(self, byteorder='little', signed = False):
-		return int.from_bytes(self.read(6), byteorder=byteorder, signed=signed)
 		
 	def readInt64(self, byteorder='little', signed = False):
 		return int.from_bytes(self.read(8), byteorder=byteorder, signed=signed)

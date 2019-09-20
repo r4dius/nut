@@ -1,26 +1,20 @@
+from nut import Titles
 import json
+from nut import Titles
 from nut import Status
 from nut import Nsps
 from nut import Print
 import Server
 from nut import Config
+from nut import Hex
 import socket
 import struct
 import time
 import nut
+import cdn
+from nut import blockchain
 import urllib.parse
 import requests
-import sys
-from bs4 import BeautifulSoup
-import pickle
-from googleapiclient.discovery import build
-from google_auth_oauthlib.flow import InstalledAppFlow
-from google.auth.transport.requests import Request
-from googleapiclient.http import MediaIoBaseDownload
-import io
-import hashlib
-
-SCOPES = ['https://www.googleapis.com/auth/drive.metadata.readonly', 'https://www.googleapis.com/auth/drive.readonly']
 
 try:
 	from PIL import Image
@@ -28,37 +22,6 @@ except ImportError:
 	import Image
 import Server
 import os
-
-def makeRequest(method, url, hdArgs={}, start = None, end = None, accept = '*/*'):
-	if start is None:
-		reqHd = {
-			'Accept': accept,
-			'Connection': None,
-			'Accept-Encoding': None,
-			'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/67.0.3396.99 Safari/537.36'
-		}
-	else:
-		reqHd = {
-			'Accept': accept,
-			'Connection': None,
-			'Accept-Encoding': None,
-			'Range': 'bytes=%d-%d' % (start, end-1),
-			'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/67.0.3396.99 Safari/537.36'
-		}
-
-	reqHd.update(hdArgs)
-
-	r = requests.request(method, url, headers=reqHd, verify=False, stream=True, timeout=15)
-
-	Print.debug('%s %s %s' % (method, str(r.status_code), url))
-	Print.debug(r.request.headers)
-	#data = dump.dump_all(r)
-	#print(data.decode('utf-8'))
-
-	if r.status_code == 403:
-		raise IOError('Forbidden ' + r.text)
-
-	return r
 
 def success(request, response, s):
 	response.write(json.dumps({'success': True, 'result': s}))
@@ -87,8 +50,10 @@ def getSearch(request, response):
 	if demo:
 		demo = int(demo[0])
 
-	for path, f in Nsps.files.items():
-		o.append({'id': f.titleId, 'name': f.fileName(), 'version': int(f.version) if f.version else None })
+	for k, t in Titles.items():
+		f = t.getLatestFile()
+		if f and f.hasValidTicket and (region == None or t.region in region) and (dlc == None or t.isDLC == dlc) and (update == None or t.isUpdate == update) and (demo == None or t.isDemo == demo) and (publisher == None or t.publisher in publisher):
+			o.append({'id': t.getId(), 'name': t.getName(), 'version': int(f.version) if f.version else None , 'region': t.getRegion(),'size': f.getFileSize(), 'mtime': f.getFileModified() })
 	response.write(json.dumps(o))
 
 def getTitles(request, response):
@@ -208,13 +173,35 @@ def getScreenshotImage(request, response):
 
 	return Server.Response500(request, response)
 
+def getPreload(request, response):
+	Titles.queue.add(request.bits[2])
+	response.write(json.dumps({'success': True}))
 
+def getInstall(request, response):
+	nsp = Nsps.getByTitleId(request.bits[2])
 
+	try:
+		url = ('%s:%s@%s:%d/api/download/%s/title.nsp' % (request.user.id, request.user.password, Config.server.hostname, Config.server.port, request.bits[2]))
+		Print.info('Installing ' + url)
+		file_list_payloadBytes = url.encode('ascii')
+
+		sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+		#sock.settimeout(1)
+		sock.connect((request.user.switchHost, request.user.switchPort))
+		#sock.settimeout(99999)
+
+		sock.sendall(struct.pack('!L', len(file_list_payloadBytes)) + file_list_payloadBytes)
+		while len(sock.recv(1)) < 1:
+			time.sleep(0.05)
+		sock.close()
+		response.write(json.dumps({'success': True, 'message': 'install successful'}))
+	except BaseException as e:
+		response.write(json.dumps({'success': False, 'message': str(e)}))
 
 def getInfo(request, response):
 	try:
 		nsp = Nsps.getByTitleId(request.bits[2])
-		t = {'id': request.bits[2]}
+		t = Titles.get(request.bits[2]).__dict__
 		t['size'] = nsp.getFileSize();
 		t['mtime'] = nsp.getFileModified();
 		response.write(json.dumps(t))
@@ -380,8 +367,111 @@ def getDownload(request, response, start = None, end = None):
 	if response.bytesSent == 0:
 		response.write(b'')
 
+def getQueue(request, response):
+	r = Status.data().copy()
+	q = Titles.queue.get().copy()
+	i = Titles.queue.i
+	while i < len(q):
+		r.append({'id': q[i], 'i': 0, 'size': 0, 'elapsed': 0, 'speed': 0 })
+		i += 1
+	response.write(json.dumps(r))
+
+def getTitleUpdates(request, response):
+	r = {}
+	for path, nsp in Nsps.files.items():
+		data = nsp.isUpdateAvailable()
+		if data:
+			r[data['id']] = data
+	response.write(json.dumps(r))
+
+def getFiles(request, response):
+	r = {}
+	for path, nsp in Nsps.files.items():
+		if Titles.contains(nsp.titleId):
+			title = Titles.get(nsp.titleId)
+			if not title.baseId in r:
+				r[title.baseId] = {'base': [], 'dlc': [], 'update': []}
+			if title.isDLC:
+				r[title.baseId]['dlc'].append(nsp.dict())
+			elif title.isUpdate:
+				r[title.baseId]['update'].append(nsp.dict())
+			else:
+				r[title.baseId]['base'].append(nsp.dict())
+	response.write(json.dumps(r))
+
 def getScan(request, response):
 	success(request, response, nut.scan())
+
+def getOrganize(request, response):
+	nut.organize()
+	success(request, response, "fin")
+
+def getUpdateDb(request, response):
+	for url in Config.titleUrls:
+		nut.updateDb(url)
+	Titles.loadTxtDatabases()
+	Titles.save()
+	return success(request, response, "Fin")
+
+def getCdnDownloadAll(request, response):
+	nut.downloadAll()
+	return success(request, response, "Fin")
+
+def getCdnDownload(request, response):
+	for id in request.bits[2:]:
+		nut.download(id)
+	return success(request, response, "Fin")
+
+def getExport(request, response):
+	if len(request.bits) < 3:
+		return Server.Response500(request, response)
+	
+	if len(request.bits) == 3:
+		nut.export(request.bits[2])
+	else:
+		nut.export(request.bits[2], request.bits[3:])
+
+	return success(request, response, "Fin")
+
+def getImportRegions(request, response):
+	nut.importRegion(request.bits[2], request.bits[3])
+
+	return success(request, response, "Fin")
+
+def getRegions(request, response):
+	response.write(json.dumps(Config.regionLanguages()))
+
+
+def getUpdateLatest(request, response):
+	nut.scanLatestTitleUpdates()
+	return success(request, response, "Fin")
+
+def getUpdateAllVersions(request, response):
+	if len(request.bits) >= 3 and int(request.bits[2]) > 0:
+		nut.updateVersions(True)
+	else:
+		nut.updateVersions(False)
+	return success(request, response, "Fin")
+
+def getScrapeShogun(request, response):
+	nut.scrapeShogun()
+	return success(request, response, "Fin")
+
+def getSubmitKey(request, response):
+	titleId = request.bits[2]
+	titleKey = request.bits[3]
+
+	try:
+		if blockchain.blockchain.suggest(titleId, titleKey) == True:
+			return success(request, response, "Key successfully added")
+		else:
+			return error(request, response, "Key validation failed")
+	except LookupError as e:
+		error(request, response, str(e))
+	except OSError as e:
+		error(request, response, str(e))
+	except BaseException as e:
+		error(request, response, str(e))
 
 
 def postTinfoilSetInstalledApps(request, response):
@@ -419,494 +509,55 @@ def getSwitchInstalled(request, response):
 
 	except BaseException as e:
 		error(request, response, str(e))
-		
-def isWindows():
-	if "win" in sys.platform[:3].lower():
-		return True
-	else:
-		return False
-
-def listDrives():
-	drives = []
-	for label,url in Config.paths.mapping().items():
-		drives.append(label)
-	if isWindows():
-		import string
-		import ctypes
-		kernel32 = ctypes.windll.kernel32
-		bitmask = kernel32.GetLogicalDrives()
-		for letter in string.ascii_uppercase:
-			if bitmask & 1:
-				drives.append(letter)
-			bitmask >>= 1
-		return drives
-	
-	drives.append('root')
-	
-	return drives
-
-def isBlocked(path):
-	path = path.lower()
-
-	whitelist = ['.nro', '.xci', '.nsp', '.nsx', '.conf', '.json', '.db', '.tfl', '.jpg', '.gif', '.png', '.bin', '.enc', '.ini', '.ips', '.txt', '.pdf']
-
-	for ext in whitelist:
-		if path.endswith(ext):
-			return False
-
-	return True
-	
-def isNetworkPath(url):
-	return url.startswith('http://') or url.startswith('https://')
 
 def cleanPath(path = None):
-	if not path:
-		return None
-		
-	bits = path.replace('\\', '/').split('/')
-	drive = bits[0]
-	bits = bits[1:]
-	
-	if drive in Config.paths.mapping():
-		url = Config.paths.mapping()[drive]
-		if isNetworkPath(url):
-			path = os.path.join(url, '/'.join(bits))
-		else:
-			path = os.path.abspath(os.path.join(os.path.abspath(url), '/'.join(bits)))
-	elif isWindows():
-		path = os.path.abspath(os.path.join(drive+':/', '/'.join(bits)))
+	if path:
+		path = os.path.abspath(os.path.join(Config.paths.scan, path))
 	else:
-		path = os.path.abspath('/'.join(bits))
+		path = os.path.abspath(Config.paths.scan)
 
+	if not path.startswith(os.path.abspath(Config.paths.scan)):
+		raise IOError('invalid path requested: ' + path)
 	return path
 
-def resolveRelativeUrl(path, parent):
-	if path[0] == '/':
-		#return '/' + parent + path
-		if len(path) > 1:
-			return path[1:]
-	#return '/'.join(parent.split('/')[0:3]) + path
-	return path
-	
-def isValidCache(cacheFileName, expiration = 10 * 60):
-	if not os.path.isfile(cacheFileName):
-		return False
-
-	if not expiration or time.time() - os.path.getmtime(cacheFileName) < expiration:
-		return True
-	return False
-	
-def gdriveQuery(service, q, fields = ['id', 'name', 'size', 'mimeType'], expiration = 10 * 60, teamDriveId = None):
-	cacheFileName = 'cache/gdrive/' + hashlib.md5((str(teamDriveId) + str(q) + ','.join(fields)).encode()).hexdigest()
-	
-	os.makedirs('cache/gdrive/', exist_ok=True)
-	
-	try:
-		if isValidCache(cacheFileName, expiration = expiration):
-			with open(cacheFileName, encoding="utf-8-sig") as f:
-				return json.loads(f.read())
-	except:
-		pass
-	
-	nextToken = None
-	items = []
-	
-	while True:
-		if teamDriveId:
-			results = service.files().list(pageSize=100, teamDriveId=teamDriveId, includeItemsFromAllDrives = True, corpora = "teamDrive", supportsTeamDrives = True, q = q, fields="nextPageToken, files(" + ', '.join(fields)  + ")", pageToken = nextToken).execute()
-		else:
-			results = service.files().list(pageSize=100, q = q, fields="nextPageToken, files(" + ', '.join(fields)  + ")", pageToken = nextToken).execute()
-		items += results.get('files', [])
-			
-		if not 'nextPageToken' in results:
-			break
-
-		nextToken = results['nextPageToken']
-		
-	try:
-		with open(cacheFileName, 'w') as f:
-			json.dump(items, f)
-	except:
-		pass
-		
-	return items
-	
-def gdriveDrives(service, fields = ['nextPageToken', 'drives(id, name)']):
-
-	cacheFileName = 'cache/gdrive/' + hashlib.md5((','.join(fields)).encode()).hexdigest()
-	
-	os.makedirs('cache/gdrive/', exist_ok=True)
-	
-	try:
-		if isValidCache(cacheFileName, expiration = expiration):
-			with open(cacheFileName, encoding="utf-8-sig") as f:
-				return json.loads(f.read())
-	except:
-		pass
-		
-	nextToken = None
-	items = []
-	
-	while True:
-		results = service.drives().list(pageSize=100, fields=', '.join(fields), pageToken = nextToken).execute()
-		items += results.get('drives', [])
-			
-		if not 'nextPageToken' in results:
-			break
-		nextToken = results['nextPageToken']
-		break
-		
-	try:
-		with open(cacheFileName, 'w') as f:
-			json.dump(items, f)
-	except:
-		pass
-		
-	return items
-
-def gdriveSearchTree(pathBits, nameIdMap, children, id = None, roots = None):
-	if id is None:
-		for name, id in roots.items():
-			if name == pathBits[0]:
-				r = gdriveSearchTree(pathBits[1:], nameIdMap, children, id, roots)
-				if r is not None:
-					return r
-		return None
-		
-	if len(pathBits) <= 0:
-		return id
-		
-	for folderId in nameIdMap[pathBits[0]]:	
-		if len(pathBits) == 1:
-			return folderId
-
-		if folderId in children:
-			for item in children[folderId]:
-				r = gdriveSearchTree(pathBits[1:], nameIdMap, children, folderId, roots)
-			
-				if r is not None:
-					return r
-
-	return None
-
-def getFileInfo(service, path):
-	bits = [x for x in path.split('/') if x]
-	folderId = gdriveGetFolderId(service, '/'.join(bits[0:-1]))
-	return gdriveQuery(service, "'%s' in parents and trashed=false and mimeType != 'application/vnd.google-apps.folder'" % folderId)
-
-def getTeamDriveId(service, path):
-	bits = [x for x in path.replace('\\', '/').split('/') if x]
-	
-	if len(bits) == 0:
-		return None
-	
-	if bits[0] == 'mydrive':			
-		return None
-	else:
-		for item in gdriveDrives(service):
-			id = item['id']
-			name = item['name']
-			if name == bits[0]:
-				return id
-
-	return None
-	
-def gdriveGetFolderId(service, path):
-	bits = [x for x in path.replace('\\', '/').split('/') if x]
-	
-	if len(bits) == 0:
-		return 'root'
-
-	nextToken = None
-	items = []
-	
-	children = {'root': []}
-	names = {}
-	roots = {}	
-
-	rootId = None
-	teamDriveId = None
-	
-	if bits[0] == 'mydrive':			
-		rootId = 'root'
-	else:
-		for item in gdriveDrives(service):
-			id = item['id']
-			name = item['name']
-			if name == bits[0]:
-				rootId = id
-				teamDriveId = id
-				break
-
-	if not rootId:
-		return None
-		
-	if len(bits) == 1:
-		return rootId
-		
-	for item in gdriveQuery(service, "'%s' in parents and trashed=false and mimeType = 'application/vnd.google-apps.folder'" % rootId, teamDriveId = teamDriveId):
-		roots[item['name']] = item['id']
-	
-	if rootId == 'root':
-		items = gdriveQuery(service, "mimeType = 'application/vnd.google-apps.folder'", fields = ['id', 'name', 'size', 'mimeType', 'parents'])
-	else:
-		items = gdriveQuery(service, "mimeType = 'application/vnd.google-apps.folder'", fields = ['id', 'name', 'size', 'mimeType', 'parents'], teamDriveId = rootId)
-		
-	for item in items:
-		if 'parents' in item:
-			for parentId in item['parents']:
-				if not parentId in children:
-					children[parentId] = []
-				children[parentId].append(item)
-		else:
-			children['root'].append(item)
-		
-		if not item['name'] in names:
-			names[item['name']] = []
-		names[item['name']].append(item['id'])
-		
-
-	return gdriveSearchTree(bits[1:], names, children, None, roots)
-	
-def getFileInfo(service, path):
-	try:
-		bits = [x for x in path.replace('\\', '/').split('/') if x]
-		dirPath = '/'.join(bits[0:-1])
-		folderId = gdriveGetFolderId(service, dirPath)
-		
-		teamDriveId = getTeamDriveId(service, path)
-
-		for item in gdriveQuery(service, "'%s' in parents and trashed=false and mimeType != 'application/vnd.google-apps.folder'" % folderId, fields = ['*'], teamDriveId = teamDriveId):
-			if item['name'] == bits[-1]:
-				return item
-	except:
-		raise
-	return None
-	
-def getGdriveToken(request, response):
-	creds = None
-
-	if os.path.exists('token.pickle'):
-		with open('token.pickle', 'rb') as token:
-			creds = pickle.load(token)
-
-	if not creds or not creds.valid:
-		if creds and creds.expired and creds.refresh_token:
-			creds.refresh(Request())
-		else:
-			flow = InstalledAppFlow.from_client_secrets_file(
-				Config.getGdriveCredentialsFile(), SCOPES)
-			creds = flow.run_local_server(port=0)
-
-		with open('token.pickle', 'wb') as token:
-			pickle.dump(creds, token)
-	
-	r = {}
-	r['access_token'] = creds.token
-	r['refresh_token'] = creds.refresh_token
-	
-	with open(Config.getGdriveCredentialsFile(), 'r') as f:
-		r['credentials'] = json.loads(f.read())
-	
-	
-	response.write(json.dumps(r))
-		
-def listGdriveDir(path):
-	r = {'dirs': [], 'files': []}
-	
-	creds = None
-
-	if os.path.exists('token.pickle'):
-		with open('token.pickle', 'rb') as token:
-			creds = pickle.load(token)
-
-	if not creds or not creds.valid:
-		if creds and creds.expired and creds.refresh_token:
-			creds.refresh(Request())
-		else:
-			flow = InstalledAppFlow.from_client_secrets_file(
-				Config.getGdriveCredentialsFile(), SCOPES)
-			creds = flow.run_local_server(port=0)
-
-		with open('token.pickle', 'wb') as token:
-			pickle.dump(creds, token)
-
-	service = build('drive', 'v3', credentials=creds)
-
-	bits = [x for x in path.replace('\\', '/').split('/') if x]
-
-
-	
-	if len(bits) == 0:
-		r['dirs'].append({'name': 'mydrive'})
-		for item in gdriveDrives(service):
-			r['dirs'].append({'name': item['name']})
-	else:
-		teamDriveId = getTeamDriveId(service, path)
-		for item in gdriveQuery(service, "'%s' in parents and trashed=false" % gdriveGetFolderId(service, path), teamDriveId = teamDriveId):
-			o = {'name':  item['name']}
-			if 'size' in item:
-				o['size'] = int(item['size'])
-				
-			if 'kind' in item:
-				o['kind'] = item['kind']
-				
-			if 'mimeType' in item and item['mimeType'] == 'application/vnd.google-apps.folder':
-				r['dirs'].append(o)
-			else:
-				r['files'].append(o)			
-
-	return r
-	
 def getDirectoryList(request, response):
-	try:
-		path = ''
-		
-		if len(request.bits) > 2:
-			virtualDir = request.bits[2]
-		else:
-			virtualDir = ''
+	path = ''
+	for i in request.bits[2:]:
+		path = os.path.join(path, i)
 
-		if virtualDir == 'gdrive':
-			for i in request.bits[3:]:
-				path = os.path.join(path, i)
-			r = listGdriveDir(path)
-			response.write(json.dumps(r))
-			return
-			
-		for i in request.bits[2:]:
-			path = os.path.join(path, i)
-			
-		path = cleanPath(path)
-		
-		r = {'dirs': [], 'files': []}
-		
-		if not path:
-			for d in listDrives():
-				r['dirs'].append({'name': d})
-			response.write(json.dumps(r))
-			return
-		
-		if isNetworkPath(path):
-			x = makeRequest('GET', path)
-			soup = BeautifulSoup(x.text, 'html.parser')
-			items = soup.select('a')
-			
-			for a in items:
-				href = a['href']
-				
-				if href.endswith('/'):
-					r['dirs'].append({'name': resolveRelativeUrl(href, virtualDir)})
-				else:
-					r['files'].append({'name': resolveRelativeUrl(href, virtualDir)})
-			
-		else:
-			for name in os.listdir(path):
-				abspath = os.path.join(path, name)
+	path = cleanPath(path)
+	r = {'dirs': [], 'files': []}
+	for name in os.listdir(path):
+		abspath = os.path.join(path, name)
 
-				if os.path.isdir(abspath):
-					r['dirs'].append({'name': name})
-				elif os.path.isfile(abspath):
-					if not isBlocked(abspath):
-						r['files'].append({'name': name, 'size': os.path.getsize(abspath), 'mtime': os.path.getmtime(abspath)})
+		if os.path.isdir(abspath):
+			r['dirs'].append({'name': name})
+		elif os.path.isfile(abspath):
+			if not abspath.endswith('pem') and not abspath.endswith('pfx') and not abspath.endswith('token') and not abspath.endswith('users.conf'):
+				r['files'].append({'name': name, 'size': os.path.getsize(abspath), 'mtime': os.path.getmtime(abspath)})
 
-		response.write(json.dumps(r))
-	except:
-		raise
-		raise IOError('dir list access denied')
-		
-def downloadProxyFile(url, response, start = None, end = None, headers = {}):
-	bytes = 0
-	
-	r = makeRequest('GET', url, start = start, end = end, hdArgs = headers)
-	size = int(r.headers.get('Content-Length'))
 
-	chunkSize = 0x100000
+	response.write(json.dumps(r))
 
-	if size >= 10000:
-
-		for chunk in r.iter_content(chunkSize):
-			response.write(chunk)
-			bytes += len(chunk)
-
-			if not Config.isRunning:
-				break
-	else:
-		response.write(r.content)
-		bytes += len(r.content)
-
-	if size != 0 and bytes != size:
-		raise ValueError('Downloaded data is not as big as expected (%s/%s)!' % (bytes, size))
-
-	return bytes
-	
-def downloadGdriveFile(response, url, start = None, end = None):
-	creds = None
-
-	if os.path.exists('token.pickle'):
-		with open('token.pickle', 'rb') as token:
-			creds = pickle.load(token)
-
-	if not creds or not creds.valid:
-		if creds and creds.expired and creds.refresh_token:
-			creds.refresh(Request())
-		else:
-			flow = InstalledAppFlow.from_client_secrets_file(
-				Config.getGdriveCredentialsFile(), SCOPES)
-			creds = flow.run_local_server(port=0)
-
-		with open('token.pickle', 'wb') as token:
-			pickle.dump(creds, token)
-
-	service = build('drive', 'v3', credentials=creds)
-	
-	info = getFileInfo(service, url)
-
-	if not info:
-		return Server.Response404(request, response)
-		
-	#request = service.files().get_media(fileId=info['id'])
-	
-	return downloadProxyFile('https://www.googleapis.com/drive/v3/files/%s?alt=media' % info['id'], response, start, end, headers = {'Authorization': 'Bearer ' + creds.token })
-	
 def getFile(request, response, start = None, end = None):
-	try:
-		path = ''
-		
-		if len(request.bits) > 2:
-			virtualDir = request.bits[2]
-		else:
-			virtualDir = ''
-		
-		for i in request.bits[2:]:
-			path = os.path.join(path, i)
-		path = cleanPath(path)
+	path = ''
+	for i in request.bits[2:]:
+		path = os.path.join(path, i)
+	path = cleanPath(path)
 
-		if isBlocked(path):
-			raise IOError('access denied');
+	if path.endswith('.pem') or path.endswith('.pfx') or path.endswith('.token') or path.endswith('users.conf'):
+		raise IOError('access denied');
 
-		if 'Range' in request.headers:
-			start, end = request.headers.get('Range').strip().strip('bytes=').split('-')
+	if 'Range' in request.headers:
+		start, end = request.headers.get('Range').strip().strip('bytes=').split('-')
 
-			if end != '':
-				end = int(end) + 1
+		if end != '':
+			end = int(end) + 1
 
-			if start != '':
-				start = int(start)
+		if start != '':
+			start = int(start)
 
-		if virtualDir == 'gdrive':
-			path = ''
-			for i in request.bits[3:]:
-				path = os.path.join(path, i)				
-			return downloadGdriveFile(response, path, start = start, end = end)
-			
-		elif isNetworkPath(path):
-			downloadProxyFile(path, response, start = start, end = end)
-		else:
-			return serveFile(response, path, start = start, end = end)
-	except:
-		raise
-		raise IOError('file read access denied')
+	return serveFile(response, path, start = start, end = end)
 
 def getFileSize(request, response):
 	t = {}
@@ -921,4 +572,25 @@ def getFileSize(request, response):
 	except BaseException as e:
 		response.write(json.dumps({'success': False, 'message': str(e)}))
 
+def makeRequest(method, url, hdArgs={}):
 
+	reqHd = {
+		'User-Agent': 'NintendoSDK Firmware/%s (platform:NX; eid:%s)' % (Config.cdn.firmware, Config.cdn.environment),
+		'Accept-Encoding': 'gzip, deflate',
+		'Accept': '*/*',
+		'Connection': 'keep-alive'
+	}
+
+	reqHd.update(hdArgs)
+
+	r = requests.request(method, url, headers=reqHd, verify=False, stream=True)
+
+	if r.status_code == 403:
+		raise IOError('Request rejected by server! Check your cert ' + r.text)
+
+	return r
+
+def getProxy(request, response):
+	u = urllib.parse.unquote(request.bits[2])
+	r = makeRequest('get', u)
+	response.write(r.content)
