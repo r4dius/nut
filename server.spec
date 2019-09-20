@@ -5,7 +5,7 @@ block_cipher = None
 
 a = Analysis(['server.py'],
              pathex=['.'],
-             binaries=[],
+             binaries=[('C:\\WINDOWS\\SysWOW64\\libusb0.dll', '.')],
              datas=[],
              hiddenimports=[],
              hookspath=[],

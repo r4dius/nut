@@ -1,5 +1,6 @@
 __pycache__/
 *.py[cod]
+*.exe
 
 conf/nut.conf
 conf/user.conf
@@ -16,5 +17,4 @@ titles/*
 titledb/files.json
 titledb/titles.json
 titledb/redirectCache.json
-server.exe
 conf/users.conf
