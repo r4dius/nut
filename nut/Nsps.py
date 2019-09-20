@@ -109,7 +109,7 @@ def load(fileName = 'titledb/files.json'):
 	hasLoaded = True
 
 	try:
-		timestamp = time.clock()
+		timestamp = time.process_time()
 
 		if os.path.isfile(fileName):
 			with open(fileName, encoding="utf-8-sig") as f:
@@ -127,7 +127,7 @@ def load(fileName = 'titledb/files.json'):
 						files[path] = t #Fs.Nsp(path, None)
 	except:
 		raise
-	Print.info('loaded file list in ' + str(time.clock() - timestamp) + ' seconds')
+	Print.info('loaded file list in ' + str(time.process_time() - timestamp) + ' seconds')
 
 def save(fileName = 'titledb/files.json', map = ['id', 'path', 'version', 'timestamp', 'hasValidTicket']):
 	lock.acquire()

@@ -9,6 +9,8 @@ Certificate.cert
 nx_tls_client_cert.pem
 
 _NSPOUT/
+build/
+dist/
 titles/
 
 titledb/files.json
