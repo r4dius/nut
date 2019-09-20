@@ -182,9 +182,10 @@ optional arguments:
 ```
 
 ### Compile server.exe
-- Required : pip install pyinstall PyQt5==5.12.1
+- Required 
+  -`pip install pyinstall PyQt5==5.12.1`
 
-Run pyinstaller server.spec or _compile_server.bat
+- Run `pyinstaller server.spec` or `_compile_server.bat`
 
 # Credits
 - Original CDNSP
