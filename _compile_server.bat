@@ -1,0 +1,2 @@
+pyinstaller server.spec
+pause

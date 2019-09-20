@@ -11,8 +11,10 @@ nx_tls_client_cert.pem
 _NSPOUT/
 build/
 dist/
-titles/
+titles/*
 
 titledb/files.json
 titledb/titles.json
 titledb/redirectCache.json
+server.exe
+conf/users.conf

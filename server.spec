@@ -4,7 +4,7 @@ block_cipher = None
 
 
 a = Analysis(['server.py'],
-             pathex=['C:\\Temp\\nut-1.3'],
+             pathex=['.'],
              binaries=[],
              datas=[],
              hiddenimports=[],
